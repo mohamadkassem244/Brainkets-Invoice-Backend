@@ -11,8 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('invoice_items', function (Blueprint $table) {
+        Schema::create('in_sales_invoice_item', function (Blueprint $table) {
             $table->id();
+            $table->foreignId('invoice_id')->nullable()->constrained('in_sales_invoice')->nullOnDelete()->cascadeOnUpdate();
+            $table->string('title');
+            $table->text('description')->nullable();
+            $table->decimal('cost', 15, 2)->default(0);
+            $table->decimal('price', 15, 2)->default(0);
+            $table->unsignedSmallInteger('quantity')->default(1);
+            $table->decimal('tax_rate', 10, 2)->default(0);
+            $table->enum('tax_method', ['inclusive', 'exclusive'])->default('inclusive');
+            $table->decimal('discount', 10, 2)->default(0);
             $table->timestamps();
         });
     }
@@ -22,6 +31,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('invoice_items');
+        Schema::dropIfExists('in_sales_invoice_item');
     }
 };
