@@ -19,6 +19,7 @@ return new class extends Migration
             $table->text('address')->nullable();
             $table->enum('type', ['individual', 'company'])->default('individual');
             $table->string('company_name')->nullable();
+            $table->timestamps();
         });
     }
 

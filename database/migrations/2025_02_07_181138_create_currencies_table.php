@@ -20,6 +20,7 @@ return new class extends Migration
             $table->double('usd_to_currency');
             $table->tinyInteger('is_active')->default(1);
             $table->tinyInteger('is_default')->default(0);
+            $table->timestamps();
         });
     }
 
