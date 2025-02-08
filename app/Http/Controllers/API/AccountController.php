@@ -3,63 +3,66 @@
 namespace App\Http\Controllers;
 
 use App\Models\Account;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 
 class AccountController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        try {
+            $accounts = Account::all();
+            if ($accounts->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No accounts found.'
+                ], 404);
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $accounts
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Database query error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
+    public function show($id)
     {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Account $account)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Account $account)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, Account $account)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Account $account)
-    {
-        //
+        try {
+            $account = Account::find($id);
+            if (!$account) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Account not found.'
+                ], 404);
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $account
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Database query error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

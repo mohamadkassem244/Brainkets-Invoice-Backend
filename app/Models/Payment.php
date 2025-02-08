@@ -15,6 +15,7 @@ class Payment extends Model
         'customer_id',
         'invoice_id',
         'journal',
+        'date',
         'payment_type',
         'payment_method',
         'amount',
@@ -24,6 +25,7 @@ class Payment extends Model
     ];
 
     protected $casts = [
+        'date' => 'date',
         'amount' => 'decimal:2',
         'created_by' => 'integer',
         'updated_by' => 'integer',

@@ -3,63 +3,66 @@
 namespace App\Http\Controllers;
 
 use App\Models\Currency;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 
 class CurrencyController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
-        //
+        try {
+            $currencies = Currency::all();
+            if ($currencies->isEmpty()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'No currencies found.'
+                ], 404);
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $currencies
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Database query error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
-    public function create()
+    public function show($id)
     {
-        //
-    }
-
-    /**
-     * Store a newly created resource in storage.
-     */
-    public function store(Request $request)
-    {
-        //
-    }
-
-    /**
-     * Display the specified resource.
-     */
-    public function show(Currency $currency)
-    {
-        //
-    }
-
-    /**
-     * Show the form for editing the specified resource.
-     */
-    public function edit(Currency $currency)
-    {
-        //
-    }
-
-    /**
-     * Update the specified resource in storage.
-     */
-    public function update(Request $request, Currency $currency)
-    {
-        //
-    }
-
-    /**
-     * Remove the specified resource from storage.
-     */
-    public function destroy(Currency $currency)
-    {
-        //
+        try {
+            $currency = Currency::find($id);
+            if (!$currency) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Currency not found.'
+                ], 404);
+            }
+            return response()->json([
+                'success' => true,
+                'data' => $currency
+            ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Database query error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'An unexpected error occurred.',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }
