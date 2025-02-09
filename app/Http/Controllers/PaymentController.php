@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AgAttachment;
 use App\Models\Payment;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -21,6 +23,14 @@ class PaymentController extends Controller
                     'message' => 'No payments found.'
                 ], 404);
             }
+            $payments->transform(function ($payment) {
+                $attachments = DB::table('ag_attachment')
+                    ->where('table_name', 'in_payment')
+                    ->where('row_id', $payment->id)
+                    ->get();
+                $payment->attachments = $attachments;
+                return $payment;
+            });
             return response()->json([
                 'success' => true,
                 'data' => $payments
@@ -50,9 +60,15 @@ class PaymentController extends Controller
                     'message' => 'Payment not found.'
                 ], 404);
             }
+            $attachments = DB::table('ag_attachment')
+            ->where('table_name', 'in_payment')
+            ->where('row_id', $id)
+            ->get();
+            $paymentArray = $payment->toArray();
+            $paymentArray['attachments'] = $attachments;
             return response()->json([
                 'success' => true,
-                'data' => $payment
+                'data' => $paymentArray
             ], 200);
         } catch (QueryException $e) {
             return response()->json([
@@ -80,6 +96,8 @@ class PaymentController extends Controller
             'payment_method' => 'required|in:cash,bank',
             'amount'         => 'required|numeric|min:0',
             'note'           => 'nullable|string',
+            'attachments' => 'nullable|array',
+            'attachments.*' => 'file|max:10240',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -92,6 +110,25 @@ class PaymentController extends Controller
             DB::beginTransaction();
             $validatedData = $validator->validated();
             $payment = Payment::create($validatedData);
+            if (isset($validatedData['attachments'])) {
+                foreach ($validatedData['attachments'] as $file) {
+                    $attachment = AgAttachment::create([
+                        'table_name' => 'in_payment',
+                        'row_id' => $payment->id,
+                        'type' => 1,
+                        'file_path' => null,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'file_size' => $file->getSize(),
+                        'cdn_uploaded' => false
+                    ]);
+                    $path = $file->store('attachments/payment', 'public');
+                    $attachment->update([
+                        'file_path' => $path,
+                        'cdn_uploaded' => true
+                    ]);
+                }
+            }
             DB::commit();
             return response()->json([
                 'success' => true,
@@ -133,6 +170,8 @@ class PaymentController extends Controller
             'payment_method' => 'required|in:cash,bank',
             'amount'         => 'required|numeric|min:0',
             'note'           => 'nullable|string',
+            'attachments' => 'nullable|array',
+            'attachments.*' => 'file|max:10240',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -145,6 +184,25 @@ class PaymentController extends Controller
             DB::beginTransaction();
             $validatedData = $validator->validated();
             $payment->update($validatedData);
+            if (isset($validatedData['attachments'])) {
+                foreach ($validatedData['attachments'] as $file) {
+                    $attachment = AgAttachment::create([
+                        'table_name' => 'in_payment',
+                        'row_id' => $payment->id,
+                        'type' => 1,
+                        'file_path' => null,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'file_size' => $file->getSize(),
+                        'cdn_uploaded' => false
+                    ]);
+                    $path = $file->store('attachments/payment', 'public');
+                    $attachment->update([
+                        'file_path' => $path,
+                        'cdn_uploaded' => true
+                    ]);
+                }
+            }
             DB::commit();
             return response()->json([
                 'success' => true,
@@ -168,7 +226,6 @@ class PaymentController extends Controller
         }
     }
 
-
     public function destroy($id)
     {
         try {
@@ -184,8 +241,20 @@ class PaymentController extends Controller
                 DB::rollBack();
                 return response()->json([
                     'success' => false,
-                    'message' => 'Failed to delete invoice.'
+                    'message' => 'Failed to delete payment.'
                 ], 500);
+            }
+            $attachments = AgAttachment::where('table_name', 'in_payment')
+                ->where('row_id', $id)
+                ->get();
+            if ($attachments->isNotEmpty()) {
+                foreach ($attachments as $attachment) {
+                    $filePath = $attachment->file_path;
+                    if (Storage::disk('public')->exists($filePath)) {
+                        Storage::disk('public')->delete($filePath);
+                    }
+                    $attachment->delete();
+                }
             }
             DB::commit();
             return response()->json([

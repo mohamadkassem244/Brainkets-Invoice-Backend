@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\AgAttachment;
 use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
@@ -22,6 +24,14 @@ class InvoiceController extends Controller
                     'message' => 'No invoices found.'
                 ], 404);
             }
+            $invoices->transform(function ($invoice) {
+                $attachments = DB::table('ag_attachment')
+                    ->where('table_name', 'in_sales_invoice')
+                    ->where('row_id', $invoice->id)
+                    ->get();
+                $invoice->attachments = $attachments;
+                return $invoice;
+            });
             return response()->json([
                 'success' => true,
                 'data' => $invoices
@@ -51,9 +61,15 @@ class InvoiceController extends Controller
                     'message' => 'Invoice not found.'
                 ], 404);
             }
+            $attachments = DB::table('ag_attachment')
+                ->where('table_name', 'in_sales_invoice')
+                ->where('row_id', $id)
+                ->get();
+            $invoiceArray = $invoice->toArray();
+            $invoiceArray['attachments'] = $attachments;
             return response()->json([
                 'success' => true,
-                'data' => $invoice
+                'data' => $invoiceArray
             ], 200);
         } catch (QueryException $e) {
             return response()->json([
@@ -98,6 +114,8 @@ class InvoiceController extends Controller
             'items.*.tax_rate' => 'required|numeric|min:0',
             'items.*.tax_method' => 'required|in:inclusive,exclusive',
             'items.*.discount' => 'required|numeric|min:0',
+            'attachments' => 'nullable|array',
+            'attachments.*' => 'file|max:10240',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -136,6 +154,25 @@ class InvoiceController extends Controller
                 'total' => $invoice_total,
                 'grand_total' => $invoice_grand_total
             ]);
+            if (isset($validatedData['attachments'])) {
+                foreach ($validatedData['attachments'] as $file) {
+                    $attachment = AgAttachment::create([
+                        'table_name' => 'in_sales_invoice',
+                        'row_id' => $invoice->id,
+                        'type' => 1,
+                        'file_path' => null,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'file_size' => $file->getSize(),
+                        'cdn_uploaded' => false
+                    ]);
+                    $path = $file->store('attachments/invoice', 'public');
+                    $attachment->update([
+                        'file_path' => $path,
+                        'cdn_uploaded' => true
+                    ]);
+                }
+            }
             DB::commit();
             return response()->json([
                 'success' => true,
@@ -195,6 +232,8 @@ class InvoiceController extends Controller
             'items.*.tax_rate' => 'required|numeric|min:0',
             'items.*.tax_method' => 'required|in:inclusive,exclusive',
             'items.*.discount' => 'required|numeric|min:0',
+            'attachments' => 'nullable|array',
+            'attachments.*' => 'file|max:10240',
         ]);
         if ($validator->fails()) {
             return response()->json([
@@ -241,6 +280,25 @@ class InvoiceController extends Controller
                 'total' => $invoice_total,
                 'grand_total' => $invoice_grand_total
             ]);
+            if (isset($validatedData['attachments'])) {
+                foreach ($validatedData['attachments'] as $file) {
+                    $attachment = AgAttachment::create([
+                        'table_name' => 'in_sales_invoice',
+                        'row_id' => $invoice->id,
+                        'type' => 1,
+                        'file_path' => null,
+                        'file_name' => $file->getClientOriginalName(),
+                        'file_extension' => $file->getClientOriginalExtension(),
+                        'file_size' => $file->getSize(),
+                        'cdn_uploaded' => false
+                    ]);
+                    $path = $file->store('attachments/invoice', 'public');
+                    $attachment->update([
+                        'file_path' => $path,
+                        'cdn_uploaded' => true
+                    ]);
+                }
+            }
             DB::commit();
             return response()->json([
                 'success' => true,
@@ -282,6 +340,18 @@ class InvoiceController extends Controller
                     'success' => false,
                     'message' => 'Failed to delete invoice items. Invoice deletion aborted.'
                 ], 500);
+            }
+            $attachments = AgAttachment::where('table_name', 'in_sales_invoice')
+                ->where('row_id', $id)
+                ->get();
+            if ($attachments->isNotEmpty()) {
+                foreach ($attachments as $attachment) {
+                    $filePath = $attachment->file_path;
+                    if (Storage::disk('public')->exists($filePath)) {
+                        Storage::disk('public')->delete($filePath);
+                    }
+                    $attachment->delete();
+                }
             }
             if (!$invoice->delete()) {
                 DB::rollBack();

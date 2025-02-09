@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AgAttachmentController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
@@ -18,3 +19,6 @@ Route::post('/payment', [PaymentController::class, 'store']);
 Route::post('/payment/{payment_id}', [PaymentController::class, 'update'])->where('payment_id', '[0-9]+');
 Route::delete('/payment/{payment_id}', [PaymentController::class, 'destroy']);
 Route::post('/payment/amount', [PaymentController::class, 'calculateTotalAmountBetweenTwoDates']);
+
+Route::post('/attachment', [AgAttachmentController::class, 'store']);
+Route::delete('/attachment/{attachment_id}', [AgAttachmentController::class, 'destroy'])->where('attachment_id', '[0-9]+');
