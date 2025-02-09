@@ -6,6 +6,7 @@ use App\Models\Invoice;
 use App\Models\InvoiceItem;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 
@@ -14,7 +15,7 @@ class InvoiceController extends Controller
     public function index()
     {
         try {
-            $invoices = Invoice::all();
+            $invoices = Invoice::with('invoiceItems')->get();
             if ($invoices->isEmpty()) {
                 return response()->json([
                     'success' => false,
@@ -43,7 +44,7 @@ class InvoiceController extends Controller
     public function show($id)
     {
         try {
-            $invoice = Invoice::find($id);
+            $invoice = Invoice::with('items')->find($id);
             if (!$invoice) {
                 return response()->json([
                     'success' => false,
@@ -71,101 +72,88 @@ class InvoiceController extends Controller
 
     public function store(Request $request)
     {
+        $validator = Validator::make($request->all(), [
+            'customer_id'      => 'required|exists:customer,id',
+            'currency_id'      => 'required|exists:currency,id',
+            'reference'        => 'required|string|unique:in_sales_invoice,reference',
+            'date'             => 'required|date_format:Y-m-d',
+            'due_date'         => 'nullable|date_format:Y-m-d|after_or_equal:date',
+            'status'           => 'required|in:pending,paid,overdue,canceled',
+            'is_recurring'     => 'required|boolean',
+            'repeat_cycle'     => 'required|in:daily,weekly,monthly,yearly',
+            'create_before_days' => 'required|integer|min:1',
+            'tax_rate'         => 'required|numeric|min:0',
+            'tax_method'       => 'required|in:inclusive,exclusive',
+            'shipping'         => 'required|numeric|min:0',
+            'discount'         => 'required|numeric|min:0',
+            'note'             => 'nullable|string',
+            'created_by'       => 'nullable|integer',
+            'updated_by'       => 'nullable|integer',
+            'items'            => 'required|array|min:1',
+            'items.*.title'    => 'required|string|max:255',
+            'items.*.description' => 'required|string',
+            'items.*.cost'     => 'required|numeric|min:0',
+            'items.*.price'    => 'required|numeric|min:0',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.tax_rate' => 'required|numeric|min:0',
+            'items.*.tax_method' => 'required|in:inclusive,exclusive',
+            'items.*.discount' => 'required|numeric|min:0',
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
         try {
-            $validatedData = $request->validate([
-                'customer_id'      => 'required|exists:customer,id',
-                'currency_id'      => 'required|exists:currency,id',
-                'reference'        => 'required|string|unique:in_sales_invoice,reference',
-                'date'             => 'required|date_format:Y-m-d',
-                'due_date'         => 'nullable|date_format:Y-m-d|after_or_equal:date',
-                'status'           => 'nullable|in:pending,paid,overdue,canceled',
-                'is_recurring'     => 'nullable|boolean',
-                'repeat_cycle'     => 'nullable|in:daily,weekly,monthly,yearly',
-                'create_before_days' => 'nullable|integer|min:1',
-                'tax_rate'         => 'nullable|numeric|min:0',
-                'tax_method'       => 'nullable|in:inclusive,exclusive',
-                'shipping'         => 'nullable|numeric|min:0',
-                'discount'         => 'nullable|numeric|min:0',
-                'note'             => 'nullable|string',
-                'created_by'       => 'nullable|integer',
-                'updated_by'       => 'nullable|integer',
-                'items'            => 'required|array|min:1',
-                'items.*.title'    => 'required|string|max:255',
-                'items.*.description' => 'nullable|string',
-                'items.*.cost'     => 'nullable|numeric|min:0',
-                'items.*.price'    => 'nullable|numeric|min:0',
-                'items.*.quantity' => 'nullable|integer|min:1',
-                'items.*.tax_rate' => 'nullable|numeric|min:0',
-                'items.*.tax_method' => 'nullable|in:inclusive,exclusive',
-                'items.*.discount' => 'nullable|numeric|min:0',
-            ]);
             DB::beginTransaction();
+            $validatedData = $validator->validated();
             $invoiceData = $validatedData;
             unset($invoiceData['items']);
             $invoice = Invoice::create($invoiceData);
-            $invoice_tax_rate = $invoiceData['tax_rate'] ?? 0;
-            $invoice_tax_method = $invoiceData['tax_method'] ?? 'inclusive';
-            $invoice_shipping = $invoiceData['shipping'] ?? 0;
-            $invoice_discount = $invoiceData['discount'] ?? 0;
             $invoice_total = 0;
-            $invoiceItems = [];
+            $invoice_grand_total = $invoiceData['shipping'];
             foreach ($validatedData['items'] as $itemData) {
-                $item_title = $itemData['title'];
-                $item_description = $itemData['description'] ?? null;
-                $item_cost = $itemData['cost'] ?? 0;
-                $item_price = $itemData['price'] ?? 0;
-                $item_quantity = $itemData['quantity'] ?? 1;
-                $item_tax_rate = $itemData['tax_rate'] ?? 0;
-                $item_tax_method = $itemData['tax_method'] ?? 'inclusive';
-                $item_discount = $itemData['discount'] ?? 0;
-                $item_total = $item_quantity * $item_cost;
-                if ($item_discount > 0) {
-                    $item_total -= ($item_total * $item_discount) / 100;
+                $item_total = $itemData['quantity'] * $itemData['cost'];
+                if ($itemData['discount'] > 0) {
+                    $item_total -= ($item_total * $itemData['discount']) / 100;
                 }
-                if ($item_tax_method === 'exclusive' && $item_tax_rate > 0) {
-                    $item_total += ($item_total * $item_tax_rate) / 100;
+                if ($itemData['tax_method'] === 'exclusive' && !empty($itemData['tax_rate'])) {
+                    $item_total += ($item_total * $itemData['tax_rate']) / 100;
                 }
                 $invoice_total += $item_total;
-                $invoiceItems[] = new InvoiceItem([
-                    'title'       => $item_title,
-                    'description' => $item_description,
-                    'cost'        => $item_cost,
-                    'price'       => $item_price,
-                    'quantity'    => $item_quantity,
-                    'tax_rate'    => $item_tax_rate,
-                    'tax_method'  => $item_tax_method,
-                    'discount'    => $item_discount,
-                ]);
-                $invoice->invoiceItems()->saveMany($invoiceItems);
+                $invoice->invoiceItems()->create($itemData);
             }
-            if ($invoice_discount > 0) {
-                $invoice_total -= ($invoice_total * $invoice_discount) / 100;
+            $invoice_grand_total += $invoice_total;
+            if ($invoiceData['discount'] > 0) {
+                $invoice_grand_total -= ($invoice_total * $invoiceData['discount']) / 100;
             }
-            if ($invoice_tax_method === 'exclusive' && $invoice_tax_rate > 0) {
-                $invoice_total += ($invoice_total * $invoice_tax_rate) / 100;
+            if ($invoiceData['tax_method'] === 'exclusive' && $invoiceData['tax_rate'] > 0) {
+                $invoice_grand_total += ($invoice_total * $invoiceData['tax_rate']) / 100;
             }
             $invoice->update([
                 'total' => $invoice_total,
-                'grand_total' => $invoice_total + $invoice_shipping
+                'grand_total' => $invoice_grand_total
             ]);
             DB::commit();
             return response()->json([
                 'success' => true,
                 'message' => 'Invoice created successfully.',
-                'data' => $invoice
+                'data' => $invoice->load('invoiceItems')
             ], 201);
         } catch (QueryException $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
                 'message' => 'Database error occurred while creating invoice.',
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage()
             ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred.',
+                'message' => 'An error occurred while creating the invoice.',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -173,42 +161,51 @@ class InvoiceController extends Controller
 
     public function update(Request $request, $id)
     {
+        $invoice = Invoice::find($id);
+        if (!$invoice) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invoice not found.'
+            ], 404);
+        }
+        $validator = Validator::make($request->all(), [
+            'customer_id'      => 'required|exists:customer,id',
+            'currency_id'      => 'required|exists:currency,id',
+            'reference'        => "required|string|unique:in_sales_invoice,reference,{$id}",
+            'date'             => 'required|date_format:Y-m-d',
+            'due_date'         => 'nullable|date_format:Y-m-d|after_or_equal:date',
+            'status'           => 'required|in:pending,paid,overdue,canceled',
+            'is_recurring'     => 'required|boolean',
+            'repeat_cycle'     => 'required|in:daily,weekly,monthly,yearly',
+            'create_before_days' => 'required|integer|min:1',
+            'tax_rate'         => 'required|numeric|min:0',
+            'tax_method'       => 'required|in:inclusive,exclusive',
+            'shipping'         => 'required|numeric|min:0',
+            'discount'         => 'required|numeric|min:0',
+            'note'             => 'nullable|string',
+            'created_by'       => 'nullable|integer',
+            'updated_by'       => 'nullable|integer',
+            'items'            => 'required|array|min:1',
+            'items.*.id'       => 'required|exists:in_sales_invoice_item,id',
+            'items.*.title'    => 'required|string|max:255',
+            'items.*.description' => 'required|string',
+            'items.*.cost'     => 'required|numeric|min:0',
+            'items.*.price'    => 'required|numeric|min:0',
+            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.tax_rate' => 'required|numeric|min:0',
+            'items.*.tax_method' => 'required|in:inclusive,exclusive',
+            'items.*.discount' => 'required|numeric|min:0',
+        ]);
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation errors',
+                'errors' => $validator->errors()
+            ], 422);
+        }
         try {
-            $invoice = Invoice::find($id);
-            if (!$invoice) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Invoice not found.'
-                ], 404);
-            }
-            $validatedData = $request->validate([
-                'customer_id'      => 'required|exists:customer,id',
-                'currency_id'      => 'required|exists:currency,id',
-                'reference'        => "required|string|unique:in_sales_invoice,reference,{$id}",
-                'date'             => 'required|date_format:Y-m-d',
-                'due_date'         => 'nullable|date_format:Y-m-d|after_or_equal:date',
-                'status'           => 'nullable|in:pending,paid,overdue,canceled',
-                'is_recurring'     => 'nullable|boolean',
-                'repeat_cycle'     => 'nullable|in:daily,weekly,monthly,yearly',
-                'create_before_days' => 'nullable|integer|min:1',
-                'tax_rate'         => 'nullable|numeric|min:0',
-                'tax_method'       => 'nullable|in:inclusive,exclusive',
-                'shipping'         => 'nullable|numeric|min:0',
-                'discount'         => 'nullable|numeric|min:0',
-                'note'             => 'nullable|string',
-                'updated_by'       => 'nullable|integer',
-                'items'            => 'required|array|min:1',
-                'items.*.id'       => 'nullable|exists:in_sales_invoice_item,id',
-                'items.*.title'    => 'required|string|max:255',
-                'items.*.description' => 'nullable|string',
-                'items.*.cost'     => 'nullable|numeric|min:0',
-                'items.*.price'    => 'nullable|numeric|min:0',
-                'items.*.quantity' => 'nullable|integer|min:1',
-                'items.*.tax_rate' => 'nullable|numeric|min:0',
-                'items.*.tax_method' => 'nullable|in:inclusive,exclusive',
-                'items.*.discount' => 'nullable|numeric|min:0',
-            ]);
             DB::beginTransaction();
+            $validatedData = $validator->validated();
             $invoiceData = $validatedData;
             unset($invoiceData['items']);
             $invoice->update($invoiceData);
@@ -217,12 +214,9 @@ class InvoiceController extends Controller
             $itemsToDelete = array_diff($existingItemIds, $receivedItemIds);
             InvoiceItem::whereIn('id', $itemsToDelete)->delete();
             $invoice_total = 0;
-            $invoice_tax_rate = $invoiceData['tax_rate'] ?? 0;
-            $invoice_tax_method = $invoiceData['tax_method'] ?? 'inclusive';
-            $invoice_shipping = $invoiceData['shipping'] ?? 0;
-            $invoice_discount = $invoiceData['discount'] ?? 0;
+            $invoice_grand_total = $invoiceData['shipping'];
             foreach ($validatedData['items'] as $itemData) {
-                $item_total = $itemData['quantity'] * $itemData['cost'];
+                $item_total = $itemData['quantity'] * ($itemData['cost']);
                 if ($itemData['discount'] > 0) {
                     $item_total -= ($item_total * $itemData['discount']) / 100;
                 }
@@ -230,40 +224,41 @@ class InvoiceController extends Controller
                     $item_total += ($item_total * $itemData['tax_rate']) / 100;
                 }
                 $invoice_total += $item_total;
-                if (isset($itemData['id'])) {
+                if (!empty($itemData['id'])) {
                     InvoiceItem::where('id', $itemData['id'])->update($itemData);
                 } else {
                     $invoice->invoiceItems()->create($itemData);
                 }
             }
-            if ($invoice_discount > 0) {
-                $invoice_total -= ($invoice_total * $invoice_discount) / 100;
+            $invoice_grand_total += $invoice_total;
+            if ($invoiceData['discount'] > 0) {
+                $invoice_grand_total -= ($invoice_total * $invoiceData['discount']) / 100;
             }
-            if ($invoice_tax_method === 'exclusive' && $invoice_tax_rate > 0) {
-                $invoice_total += ($invoice_total * $invoice_tax_rate) / 100;
+            if ($invoiceData['tax_method'] === 'exclusive' && $invoiceData['tax_rate'] > 0) {
+                $invoice_grand_total += ($invoice_total * $invoiceData['tax_rate']) / 100;
             }
             $invoice->update([
                 'total' => $invoice_total,
-                'grand_total' => $invoice_total + $invoice_shipping
+                'grand_total' => $invoice_grand_total
             ]);
             DB::commit();
             return response()->json([
                 'success' => true,
                 'message' => 'Invoice updated successfully.',
-                'data' => $invoice
+                'data' => $invoice->load('invoiceItems')
             ], 200);
         } catch (QueryException $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
                 'message' => 'Database error occurred while updating invoice.',
-                'error' => $e->getMessage()
+                'error'   => $e->getMessage()
             ], 500);
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'An unexpected error occurred.',
+                'message' => 'An error occurred while updating the invoice.',
                 'error' => $e->getMessage()
             ], 500);
         }
@@ -317,37 +312,45 @@ class InvoiceController extends Controller
         }
     }
 
-    public function calculateTotalAmount(Request $request)
+    public function calculateTotalAmountBetweenTwoDates(Request $request)
     {
         try {
-            $validatedData = $request->validate([
-                'start_date' => 'required|date|before_or_equal:end_date',
-                'end_date' => 'required|date|after_or_equal:start_date',
+            $validator = Validator::make($request->all(), [
+                'start_date' => 'required|date_format:Y-m-d|before:end_date',
+                'end_date'   => 'required|date_format:Y-m-d|after:start_date',
             ]);
-
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation errors',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+            $validatedData = $validator->validated();
             $startDate = Carbon::parse($validatedData['start_date'])->startOfDay();
             $endDate = Carbon::parse($validatedData['end_date'])->endOfDay();
-
-            $totalAmount = Invoice::whereBetween('date', [$startDate, $endDate])
-                ->sum('total');
-
+            $totalAmount = (float) Invoice::whereBetween('date', [$startDate, $endDate])->sum('total');
             return response()->json([
                 'success' => true,
                 'message' => 'Total amount calculated successfully.',
-                'data' => [
-                    'total_amount' => $totalAmount
-                ]
+                'data'    => compact('totalAmount')
             ], 200);
+        } catch (QueryException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Database error occurred while calculating total amount.',
+                'error'   => $e->getMessage()
+            ], 500);
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'An error occurred while calculating the total amount.',
-                'error' => $e->getMessage()
+                'message' => 'An unexpected error occurred.',
+                'error'   => $e->getMessage()
             ], 500);
         }
     }
 
-    public function getCounts()
+    public function getInvoicesCountsByStatus()
     {
         try {
             $totalInvoices = Invoice::count();
@@ -381,5 +384,4 @@ class InvoiceController extends Controller
             ], 500);
         }
     }
-
 }
