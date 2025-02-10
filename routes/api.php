@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Controllers\AgAttachmentController;
+use App\Http\Controllers\CurrencyController;
+use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\PaymentController;
 use Illuminate\Support\Facades\Route;
@@ -22,3 +24,7 @@ Route::post('/payment/amount', [PaymentController::class, 'calculateTotalAmountB
 
 Route::post('/attachment', [AgAttachmentController::class, 'store']);
 Route::delete('/attachment/{attachment_id}', [AgAttachmentController::class, 'destroy'])->where('attachment_id', '[0-9]+');
+
+Route::get('/currency', [CurrencyController::class, 'index']);
+
+Route::get('/customer', [CustomerController::class, 'index']);
